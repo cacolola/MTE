@@ -1,0 +1,90 @@
+set.seed(201505) # To reproduce the same "random" numbers
+# These are actual estimated values from the NHANES study.
+# We will take these as the true means and standard deviations 
+true_mean_men <- 1.74#m
+true_mean_women <- 1.58#m
+true_sd_men <- 0.08#m
+true_sd_women <- 0.07#m
+
+# Generate fake data from the mixture distribution
+n <- 1000 # Sample size
+true_sex <- rbinom(n, size = 1, prob=0.5) + 1
+# Height is normally distributed but with different means and stdevs for men and women.
+height <- rnorm(n, c(true_mean_men, true_mean_women)[true_sex], 
+                c(true_sd_men, true_sd_women)[true_sex])
+
+# Look at the data
+hist(height)
+
+## Now pretend we don't know true_sex and try to estimate (guess)
+##   mean_men, mean_women, sd_men, and sd_women...
+
+# Define a function that will run the model when called
+runit <- function(maxit=3, sep_start=0.2) {
+  
+  # Choose some starting values. I choose inaccurate ones on purpose here
+  guess_mean_men <- mean(height) + sep_start # We need to start with differences
+  guess_mean_wom <- mean(height) - sep_start
+  guess_sd_men <- sd(height)
+  guess_sd_wom <- sd(height)
+  
+  cat("Iter:\tM:\tF:\tsd(M):\tsd(F):\t\n---------------------------------------\n")
+  cat(sprintf("Start\t%1.2f\t%1.2f\t%1.3f\t%1.3f\n", 
+              guess_mean_men, guess_mean_wom, 
+              guess_sd_men, guess_sd_wom))
+  
+  for(it in 1:maxit) {
+    # Posterior probability of being a man is the estimated proportion of the 
+    #    overall height of the probability curve for men+women 
+    #    that is made up by the probability curve for men:
+    pman <- dnorm(height, mean = guess_mean_men, sd = guess_sd_men) 
+    pwom <- dnorm(height, mean = guess_mean_wom, sd = guess_sd_wom)
+    post <- pman / (pman + pwom)
+  
+    # The means and standard deviations for the groups of men and women are
+    #    obtained simply by using the posterior probabilities as weights. 
+    # E.g. somebody with posterior 0.8 of being a man is counted 80% towards
+    #    the mean of men, and 20% towards that of women.
+    guess_mean_men <- weighted.mean(height, w = post)
+    guess_mean_wom <- weighted.mean(height, w = 1-post)
+    
+    guess_sd_men <- sqrt(weighted.mean((height - guess_mean_men)^2, w = post))
+    guess_sd_wom <- sqrt(weighted.mean((height - guess_mean_wom)^2, w = 1-post))
+    
+    # Output some of the results
+    cat(sprintf("%d\t%1.2f\t%1.2f\t%1.3f\t%1.3f\n", it,
+              guess_mean_men, guess_mean_wom, 
+              guess_sd_men, guess_sd_wom))
+  }
+
+  return(post) # Return the posterior probability of being a man
+}
+
+
+## Run the model!
+
+# Use height data to run the EM algorithm that estimates the means and stdevs of
+#    interest. Some intermediate output will be written to the screen.
+post <- runit(maxit=5, sep_start=0.2)
+
+## Guessing people's sex based on their posterior probability is not perfect:
+
+sex <- as.factor(true_sex)
+# Guess woman if posterior probability of being a man is less than 50%:
+guess_person_is_woman <- as.factor(post < 0.5) 
+levels(sex) <- levels(guess_person_is_woman) <- c("Man", "Woman")
+# This table gives the probability of being classified as a man/woman, given that
+#  you truly are one:
+prop.table(table(guess_person_is_woman, true_sex), 2)
+
+
+# Do the same as above with the flexmix library:
+library(flexmix)
+height_fit_flexmix <- flexmix(height ~ 1, k = 2)
+height_fit_flexmix@components
+
+# Or using the mclust library
+library(mclust)
+height_fit_mclust <- Mclust(height)
+summary(height_fit_mclust, parameters = TRUE)
+
